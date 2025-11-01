@@ -52,19 +52,8 @@ class RAGPipeline:
         """
         Основной метод, запускающий RAG-пайплайн для одного вопроса.
 
-        Реализует итеративный цикл FAIR-RAG:
-        1. Ищет информацию по текущим запросам.
-        2. Собирает и дедуплицирует найденные документы.
-        3. Вызывает SEA-агента для анализа полноты информации.
-        4. Если информации недостаточно, вызывает Refinement-агента для создания новых запросов.
-        5. Повторяет цикл до `config.MAX_ITERATIONS` раз или до тех пор, пока информация не будет сочтена достаточной.
-        6. Генерирует финальный ответ на основе всего собранного контекста.
-
-        Args:
-            question (str): Исходный вопрос пользователя.
-
-        Returns:
-            str: Финальный сгенерированный ответ.
+        Реализует итеративный цикл FAIR-RAG с ограничением контекста
+        для предотвращения превышения лимитов LLM.
         """
         resource_manager.log_checkpoint(f"Начало обработки вопроса: '{question[:30]}...'")
 
@@ -76,25 +65,31 @@ class RAGPipeline:
             iteration = i + 1
             resource_manager.log_checkpoint(f"Старт итерации {iteration}/{config.MAX_ITERATIONS}")
             
-            # --- Шаг 1: Поиск по текущим запросам ---
+            # --- Шаг 1: Поиск и сбор ---
             new_docs_this_iteration = []
             for q in current_queries:
+                # Мы по-прежнему ищем по всем запросам, чтобы собрать как можно больше кандидатов
                 retrieved = self.retriever.invoke(q)
                 new_docs_this_iteration.extend(retrieved)
 
-            # Дедупликация найденных документов по содержимому, чтобы не засорять контекст
+            # Дедупликация. collected_docs теперь содержит всех уникальных кандидатов.
             seen_contents = {doc.page_content for doc in collected_docs}
             unique_new_docs = [doc for doc in new_docs_this_iteration if doc.page_content not in seen_contents]
             collected_docs.extend(unique_new_docs)
+            resource_manager.log_checkpoint(f"Собрано {len(collected_docs)} всего уник. документов")
             
             if not collected_docs:
                 resource_manager.log_checkpoint("Документы не найдены, прерываем цикл")
                 break
 
-            context_str = "\n\n".join([doc.page_content for doc in collected_docs])
-            resource_manager.log_checkpoint(f"Собрано {len(collected_docs)} уник. документов")
+            # --- ИЗМЕНЕНИЕ: Обрезка контекста перед анализом ---
+            # Берем только N самых релевантных документов (которые находятся в начале списка)
+            docs_for_context = collected_docs[:config.MAX_CONTEXT_DOCS]
+            context_str = "\n\n".join([doc.page_content for doc in docs_for_context])
+            resource_manager.log_checkpoint(f"Используется {len(docs_for_context)} док-ов для контекста")
 
-            # --- Шаг 2: Аудит Доказательств (SEA) ---
+
+            # --- Шаг 2: Аудит Доказательств (SEA) на ОБРЕЗАННОМ контексте ---
             report = self.sea_agent.analyze(question, context_str)
             
             if not report:
@@ -109,11 +104,10 @@ class RAGPipeline:
                 resource_manager.log_checkpoint("Информации достаточно, завершаем цикл")
                 break
             
-            # --- Шаг 4: Уточнение Запросов (если это не последняя итерация) ---
+            # --- Шаг 4: Уточнение Запросов (если нужно) ---
             if iteration < config.MAX_ITERATIONS and report.get("remaining_gaps"):
                 new_queries = self.refinement_agent.refine(question, analysis_summary, current_queries)
                 if new_queries:
-                    # Устанавливаем новые запросы для СЛЕДУЮЩЕЙ итерации
                     current_queries = new_queries
                     resource_manager.log_checkpoint(f"Сгенерированы новые запросы: {new_queries}")
                 else:
@@ -128,7 +122,10 @@ class RAGPipeline:
         if not collected_docs:
             return "К сожалению, по вашему запросу не удалось найти релевантную информацию в базе знаний."
 
-        final_context = "\n\n".join([doc.page_content for doc in collected_docs])
+        # --- ИЗМЕНЕНИЕ: Используем тот же обрезанный контекст для финального ответа ---
+        final_docs_for_generation = collected_docs[:config.MAX_CONTEXT_DOCS]
+        final_context = "\n\n".join([doc.page_content for doc in final_docs_for_generation])
+        
         final_prompt = PROMPT_LIBRARY["final_generator"].format(
             context=final_context,
             question=question
