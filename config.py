@@ -18,9 +18,12 @@ class Config:
     # === НАСТРОЙКИ МОДЕЛЕЙ ===
     # Модели для разных ролей в агентской системе
     EMBEDDING_MODEL = "text-embedding-3-small"
+    
     GENERATOR_MODEL = "openrouter/google/gemma-3-27b-it"
-    ANALYST_MODEL = "openrouter/meta-llama/llama-3-70b-instruct"
-    REFINER_MODEL = "openrouter/meta-llama/llama-3-70b-instruct"
+    ANALYST_MODEL   = "openrouter/meta-llama/llama-3-70b-instruct"
+    REFINER_MODEL   = "openrouter/meta-llama/llama-3-70b-instruct"
+    # Для Mistral: "openrouter/mistralai/mistral-small-3.2-24b-instruct"
+    # Для Grok: "openrouter/x-ai/grok-3-mini"
 
     # === НАСТРОЙКИ РЕТРИВЕРА ===
     CHUNK_SIZE = 1000
@@ -39,6 +42,8 @@ class Config:
     # Максимальное количество итераций для FAIR-RAG цикла.
     # 1 = простой RAG. 2-3 = оптимально для сложных вопросов.
     MAX_ITERATIONS = 2
+
+    MAX_CONTEXT_DOCS = 15
 
 # Глобальный экземпляр конфига для импорта в других модулях
 config = Config()
