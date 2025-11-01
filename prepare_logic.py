@@ -20,12 +20,12 @@ from typing import List, Dict
 # --- Импорты LangChain---
 from langchain_core.documents import Document
 from langchain_community.vectorstores import FAISS
-from langchain_openai import OpenAIEmbeddings
 from langchain_text_splitters import MarkdownHeaderTextSplitter
 from langchain_community.retrievers import TFIDFRetriever
 from langchain_core.embeddings import Embeddings
 # --- Импорты scikit-learn ---
 from sklearn.feature_extraction.text import TfidfVectorizer
+from tqdm import tqdm
 
 # --- Импорты наших модулей ---
 from config import config
@@ -103,12 +103,33 @@ def prepare_all_indices():
     resource_manager.log_checkpoint("Все индексы созданы и сохранены")
 
 
-def _create_text_faiss_index(docs: List[Document], embeddings: Embeddings): 
-    """Создает и сохраняет FAISS индекс по основному тексту чанков."""
+def _create_text_faiss_index(docs: List[Document], embeddings: Embeddings):
+    """
+    Создает и сохраняет FAISS индекс по основному тексту чанков,
+    используя пакетную обработку для обхода лимитов API.
+    """
     resource_manager.log_checkpoint("-> Голова A: Создание FAISS (текст)")
-    vectorstore = FAISS.from_documents(docs, embeddings)
-    vectorstore.save_local(os.path.join(config.STORAGE_PATH, "faiss_text_index"))
-    resource_manager.log_checkpoint("-> Голова A: Индекс сохранен")
+    
+    batch_size = 256  # Оптимальный размер батча, можно тюнить
+    vectorstore = None
+
+    for i in tqdm(range(0, len(docs), batch_size), desc="Создание FAISS батчами"):
+        batch = docs[i:i + batch_size]
+        if not batch:
+            continue
+            
+        if vectorstore is None:
+            # Создаем индекс на первом батче
+            vectorstore = FAISS.from_documents(batch, embeddings)
+        else:
+            # Добавляем последующие батчи в существующий индекс
+            vectorstore.add_documents(batch)
+            
+    if vectorstore:
+        vectorstore.save_local(os.path.join(config.STORAGE_PATH, "faiss_text_index"))
+        resource_manager.log_checkpoint("-> Голова A: Индекс сохранен")
+    else:
+        print("!!! WARNING: Не удалось создать FAISS индекс (документы отсутствуют).")
 
 
 def _create_tfidf_retriever(docs: List[Document]):
@@ -121,21 +142,27 @@ def _create_tfidf_retriever(docs: List[Document]):
     resource_manager.log_checkpoint("-> Голова B: Ретривер сохранен")
 
 
-def _create_metadata_faiss_index(df: pd.DataFrame, embeddings: Embeddings): 
-    """Создает и сохраняет FAISS индекс по метаданным (аннотации + теги)."""
+def _create_metadata_faiss_index(df: pd.DataFrame, embeddings: Embeddings):
+    """
+    Создает и сохраняет FAISS индекс по метаданным.
+    Здесь данных меньше, батчинг может не понадобиться, но добавим для надежности.
+    """
     resource_manager.log_checkpoint("-> Голова C: Создание FAISS (мета)")
     meta_docs: List[Document] = []
     for index, row in df.iterrows():
         meta_content = f"Аннотация: {row.get('annotation', '')}\nТеги: {str(row.get('tags', []))}"
-        meta_doc = Document(
-            page_content=meta_content,
-            metadata={'doc_id': row.get('id', 'unknown')}
-        )
+        meta_doc = Document(page_content=meta_content, metadata={'doc_id': row.get('id', 'unknown')})
         meta_docs.append(meta_doc)
 
-    vectorstore = FAISS.from_documents(meta_docs, embeddings)
-    vectorstore.save_local(os.path.join(config.STORAGE_PATH, "faiss_meta_index"))
-    resource_manager.log_checkpoint("-> Голова C: Индекс сохранен")
+    # Здесь тоже используем from_documents, так как он эффективен для списков
+    # и количество мета-документов (350) не должно превысить лимит.
+    # Если бы превысило, мы бы применили ту же логику с батчингом.
+    if meta_docs:
+        vectorstore = FAISS.from_documents(meta_docs, embeddings)
+        vectorstore.save_local(os.path.join(config.STORAGE_PATH, "faiss_meta_index"))
+        resource_manager.log_checkpoint("-> Голова C: Индекс сохранен")
+    else:
+        print("!!! WARNING: Не удалось создать FAISS (мета) индекс.")
 
 
 def _create_concept_graph(docs: List[Document]):
