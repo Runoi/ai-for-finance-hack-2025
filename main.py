@@ -7,11 +7,8 @@
 2. Загружает переменные окружения (API-ключи).
 3. Проверяет наличие готовых поисковых индексов и запускает их создание
    при необходимости ("ленивая" инициализация).
-4. Собирает полный RAG-пайплайн со всеми компонентами:
-   - Гибридный ансамблевый ретривер.
-   - LLM-клиент.
-   - Агенты для итеративного анализа и уточнения.
-5. Запускает обработку вопросов из `questions.csv`.
+4. Собирает полный RAG-пайплайн со всеми компонентами.
+5. Запускает обработку вопросов из `questions.csv` в отказоустойчивом режиме.
 6. Сохраняет результаты в `submission.csv`.
 7. Выводит финальный отчет о потраченных ресурсах.
 """
@@ -20,6 +17,7 @@ import sys
 import os
 import pandas as pd
 from tqdm import tqdm
+import csv
 from dotenv import load_dotenv
 
 # --- 1. Настройка Окружения ---
@@ -45,9 +43,9 @@ def main_workflow():
     resource_manager.log_checkpoint("Старт основного рабочего процесса")
 
     # --- 3. "Ленивая" Инициализация Индексов ---
-    # Проверяем, существует ли хотя бы один ключевой файл индекса.
-    # Если нет, запускаем полный, ресурсоемкий процесс подготовки.
-    if not os.path.exists(os.path.join(config.STORAGE_PATH, "faiss_text_index", "index.faiss")):
+    # Проверяем наличие САМОГО ПОСЛЕДНЕГО создаваемого файла для надежности.
+    if not os.path.exists(os.path.join(config.STORAGE_PATH, "all_docs.pkl")):
+        print("Индексы не найдены или созданы не полностью. Запускаю процесс создания...")
         prepare_all_indices()
     else:
         resource_manager.log_checkpoint("Обнаружены готовые индексы. Пропускаем этап подготовки.")
@@ -55,13 +53,11 @@ def main_workflow():
     # --- 4. Сборка RAG-Пайплайна ---
     resource_manager.log_checkpoint("Сборка RAG-пайплайна...")
     try:
-        # Инициализируем все компоненты
         llm_client = LLMClient()
         sea_agent = SeaAgent(llm_client=llm_client)
         refinement_agent = RefinementAgent(llm_client=llm_client)
         ensemble_retriever = build_ensemble_retriever()
 
-        # Собираем главный пайплайн с помощью Dependency Injection
         pipeline = RAGPipeline(
             retriever=ensemble_retriever,
             llm_client=llm_client,
@@ -73,46 +69,71 @@ def main_workflow():
         print(f"!!! КРИТИЧЕСКАЯ ОШИБКА при сборке пайплайна: {e}")
         return
 
-    # --- 5. Основной Цикл Обработки Вопросов ---
+    # --- 5. Основной Цикл Обработки Вопросов с Построчной Записью ---
     try:
         questions_df = pd.read_csv(config.QUESTIONS_PATH)
     except FileNotFoundError:
         print(f"!!! КРИТИЧЕСКАЯ ОШИБКА: Файл {config.QUESTIONS_PATH} не найден.")
         return
 
-    answers = []
-    
-    for question in tqdm(questions_df['Вопрос'], desc="Генерация ответов"):
-        try:
-            answer = pipeline.run(question=question)
-            answers.append(answer)
-        except Exception as e:
-            print(f"\n!!! Ошибка при обработке вопроса '{question[:50]}...': {e}")
-            # Добавляем заглушку, чтобы не нарушать структуру submission
-            answers.append("Произошла ошибка при обработке этого вопроса.")
+    # Инициализация submission_df: создаем новый или загружаем существующий.
+    if not os.path.exists(config.SUBMISSION_PATH):
+        submission_df = questions_df.copy()
+        submission_df['Ответы на вопрос'] = pd.NA
+        submission_df.to_csv(config.SUBMISSION_PATH, index=False)
+        print(f"Создан пустой файл {config.SUBMISSION_PATH}")
+    else:
+        submission_df = pd.read_csv(config.SUBMISSION_PATH)
+        print(f"Найден существующий файл {config.SUBMISSION_PATH}. Попытка возобновления.")
+        # На случай, если файл был создан, но колонка ответов не добавилась
+        if 'Ответы на вопрос' not in submission_df.columns:
+            submission_df['Ответы на вопрос'] = pd.NA
 
-    # --- 6. Сохранение Результатов ---
-    questions_df['Ответы на вопрос'] = answers
-    questions_df.to_csv(config.SUBMISSION_PATH, index=False)
-    resource_manager.log_checkpoint(f"Файл {config.SUBMISSION_PATH} сгенерирован")
+    # Используем ручное управление tqdm с циклом iterrows для максимальной совместимости.
+    with tqdm(total=len(questions_df), desc="Генерация ответов") as progress_bar:
+        # Возвращаемся к iterrows(), так как он самый надежный по доступу к колонкам
+        for index, row in questions_df.iterrows():
+            question = str(row['Вопрос'])
+            
+            # Pylance может ругаться на 'index', но мы знаем, что это int.
+            # Используем # type: ignore для подавления ложного срабатывания.
+            if index < len(submission_df) and pd.notna(submission_df.loc[index, 'Ответы на вопрос']): # type: ignore
+                progress_bar.update(1)
+                continue
+
+            try:
+                answer = pipeline.run(question=question)
+                normalized_answer = answer.replace('\n', ' ').replace('\r', '')
+                submission_df.loc[index, 'Ответы на вопрос'] = normalized_answer # type: ignore
+            except Exception as e:
+                error_message = f"ОШИБКА: {e}"
+                print(f"\n!!! Ошибка при обработке вопроса '{question[:50]}...': {error_message}")
+                normalized_answer = answer.replace('\n', ' ').replace('\r', '')
+                submission_df.loc[index, 'Ответы на вопрос'] = normalized_answer # type: ignore
+            
+            submission_df.to_csv(
+                config.SUBMISSION_PATH, 
+                index=False,
+                quoting=csv.QUOTE_ALL,
+                lineterminator='\n' 
+            )
+            progress_bar.update(1)
+
+    resource_manager.log_checkpoint(f"Файл {config.SUBMISSION_PATH} полностью сгенерирован")
 
 
 if __name__ == "__main__":
-    # Загружаем API-ключи из .env файла
     load_dotenv()
-    
-    # Запускаем основной процесс
     main_workflow()
     
     # --- 7. Финальный Отчет по Ресурсам ---
     print("\n" + "="*25 + " ФИНАЛЬНЫЙ ОТЧЕТ ПО РЕСУРСАМ " + "="*25)
     summary = resource_manager.get_summary()
     for key, value in summary.items():
-        # Форматируем вывод для лучшей читаемости
         if "usd" in key:
-            print(f"{key:<20}: ${value:.4f}")
+            print(f"{key:<20}: ${value:.8f}")
         elif "sec" in key:
             print(f"{key:<20}: {value:.2f} s")
         else:
-            print(f"{key:<20}: {value:.2f}")
+            print(f"{key:<20}: {value:.2f} MB")
     print("="*80)
