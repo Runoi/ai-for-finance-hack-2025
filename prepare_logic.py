@@ -25,6 +25,8 @@ from langchain_community.retrievers import TFIDFRetriever
 from langchain_core.embeddings import Embeddings
 # --- Импорты scikit-learn ---
 from sklearn.feature_extraction.text import TfidfVectorizer
+from sklearn.cluster import KMeans
+
 from tqdm import tqdm
 
 # --- Импорты наших модулей ---
@@ -82,7 +84,7 @@ def prepare_all_indices():
         _create_text_faiss_index(all_docs, embedding_function)
         _create_tfidf_retriever(all_docs)
         _create_metadata_faiss_index(df, embedding_function)
-        _create_concept_graph(all_docs)
+        _create_concept_graph(all_docs,embedding_function)
         
         resource_manager.log_checkpoint("Все индексы созданы и сохранены")
     else:
@@ -95,7 +97,7 @@ def prepare_all_indices():
     _create_text_faiss_index(all_docs, embedding_function)
     _create_tfidf_retriever(all_docs)
     _create_metadata_faiss_index(df, embedding_function)
-    _create_concept_graph(all_docs)
+    _create_concept_graph(all_docs,embedding_function)
     with open(os.path.join(config.STORAGE_PATH, "all_docs.pkl"), "wb") as f:
         pickle.dump(all_docs, f)
     resource_manager.log_checkpoint("-> Список all_docs сохранен")
@@ -165,16 +167,33 @@ def _create_metadata_faiss_index(df: pd.DataFrame, embeddings: Embeddings):
         print("!!! WARNING: Не удалось создать FAISS (мета) индекс.")
 
 
-def _create_concept_graph(docs: List[Document]):
-    """Извлекает концепты и строит граф их совместной встречаемости."""
+def _create_concept_graph(docs: List[Document], embeddings: Embeddings):
+    """
+    Извлекает концепты, кластеризует их в темы и строит
+    граф их совместной встречаемости.
+    """
+
     resource_manager.log_checkpoint("-> Голова D: Создание Графа Концептов")
     
     vectorizer = TfidfVectorizer(max_features=1000, stop_words=None, ngram_range=(1,2))
     doc_texts = [doc.page_content for doc in docs]
     tfidf_matrix = vectorizer.fit_transform(doc_texts)
-    
     feature_names = vectorizer.get_feature_names_out().tolist()
     
+    # ---Иерархическая Кластеризация Концептов ---
+    resource_manager.log_checkpoint("--> Голова D: Кластеризация концептов")
+
+     # Получаем эмбеддинги для каждого концепта
+    concept_embeddings = embeddings.embed_documents(feature_names)
+    
+    # Кластеризуем на N тем
+    num_clusters = 50 # Можно вынести в config.py
+    kmeans = KMeans(n_clusters=num_clusters, random_state=42, n_init='auto')
+    kmeans.fit(concept_embeddings)
+    
+    # Создаем маппинг: концепт -> ID кластера (темы)
+    concept_to_cluster_id = {concept: str(label) for concept, label in zip(feature_names, kmeans.labels_)}
+
     G = nx.Graph()
     doc_to_concepts: Dict[str, List[str]] = {}
 
@@ -208,5 +227,7 @@ def _create_concept_graph(docs: List[Document]):
         pickle.dump(G, f)
     with open(os.path.join(config.STORAGE_PATH, "doc_to_concepts.pkl"), "wb") as f:
         pickle.dump(doc_to_concepts, f)
+    with open(os.path.join(config.STORAGE_PATH, "concept_to_cluster.pkl"), "wb") as f:
+        pickle.dump(concept_to_cluster_id, f)
         
     resource_manager.log_checkpoint("-> Голова D: Граф сохранен")

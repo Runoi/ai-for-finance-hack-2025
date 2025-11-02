@@ -1,10 +1,6 @@
-"""
-Интерактивный скрипт для отладки RAG-пайплайна на одном вопросе.
-"""
-
 import sys
 import os
-import time # <-- Добавляем импорт time
+import time
 from dotenv import load_dotenv
 
 # --- Настройка Окружения ---
@@ -14,27 +10,27 @@ if project_root not in sys.path:
 
 # --- Импорты Наших Модулей ---
 from config import config
-from utils.resource_manager import resource_manager # <-- Импортируем глобальный синглтон
+from utils.resource_manager import resource_manager
 from rag_components.llm_client import LLMClient
 from rag_components.agents import SeaAgent, RefinementAgent
 from rag_components.retrievers import build_ensemble_retriever
 from rag_components.pipeline import RAGPipeline
 from prepare_logic import prepare_all_indices
 
-
 def main():
     """
     Основная функция для интерактивной сессии.
     """
     load_dotenv()
-    
-    # Используем глобальный ResourceManager для всей сессии
     resource_manager.log_checkpoint("Старт сессии отладки")
 
     # --- Подготовка и сборка пайплайна (ВНЕ цикла) ---
-    if not os.path.exists(os.path.join(config.STORAGE_PATH, "faiss_text_index", "index.faiss")):
-        print("Индексы не найдены. Запускаю процесс создания...")
+    # Проверяем наличие САМОГО ПОСЛЕДНЕГО создаваемого файла
+    if not os.path.exists(os.path.join(config.STORAGE_PATH, "all_docs.pkl")):
+        print("Индексы не найдены или созданы не полностью. Запускаю процесс создания...")
         prepare_all_indices()
+    else:
+        print("Обнаружены готовые индексы. Пропускаем этап создания.")
     
     try:
         resource_manager.log_checkpoint("Сборка RAG-пайплайна...")
@@ -68,19 +64,15 @@ def main():
             if not question.strip():
                 continue
 
-            # Запоминаем состояние ресурсов ДО запроса
             start_time = time.time()
             start_cost = resource_manager.api_cost_usd
 
-            # --- ЗАПУСК ОБРАБОТКИ ОДНОГО ВОПРОСА ---
             answer = pipeline.run(question=question)
             
-            # --- ВЫВОД РЕЗУЛЬТАТА ---
             print("\n" + "-"*15 + " [ОТВЕТ МОДЕЛИ] " + "-"*15)
             print(answer)
             print("-" * (32 + 2))
             
-            # --- ОТЧЕТ ПО РЕСУРСАМ ДЛЯ ЭТОГО ЗАПРОСА ---
             end_time = time.time()
             end_cost = resource_manager.api_cost_usd
             

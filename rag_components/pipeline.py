@@ -6,14 +6,14 @@
 поиска и анализа информации до генерации финального, основанного на фактах, ответа.
 """
 
-from typing import List
+from typing import List, Optional
 
 # --- Импорты LangChain ---
 from langchain_core.retrievers import BaseRetriever
 from langchain_core.documents import Document
 
 # --- Импорты наших модулей ---
-from config import config
+from config import Config, config
 from utils.resource_manager import resource_manager
 from utils.prompt_library import PROMPT_LIBRARY
 from rag_components.llm_client import LLMClient
@@ -33,6 +33,7 @@ class RAGPipeline:
         llm_client: LLMClient,
         sea_agent: SeaAgent,
         refinement_agent: RefinementAgent,
+        config_override: Optional[Config] = None,
     ):
         """
         Инициализирует пайплайн.
@@ -47,6 +48,7 @@ class RAGPipeline:
         self.llm_client = llm_client
         self.sea_agent = sea_agent
         self.refinement_agent = refinement_agent
+        self.config = config_override or config
 
     def run(self, question: str) -> str:
         """
@@ -61,9 +63,9 @@ class RAGPipeline:
         current_queries: List[str] = [question]
         analysis_summary = "Первоначальный запрос пользователя."
 
-        for i in range(config.MAX_ITERATIONS):
+        for i in range(self.config.MAX_ITERATIONS):
             iteration = i + 1
-            resource_manager.log_checkpoint(f"Старт итерации {iteration}/{config.MAX_ITERATIONS}")
+            resource_manager.log_checkpoint(f"Старт итерации {iteration}/{self.config.MAX_ITERATIONS}")
             
             # --- Шаг 1: Поиск и сбор ---
             new_docs_this_iteration = []
@@ -84,7 +86,7 @@ class RAGPipeline:
 
             # --- ИЗМЕНЕНИЕ: Обрезка контекста перед анализом ---
             # Берем только N самых релевантных документов (которые находятся в начале списка)
-            docs_for_context = collected_docs[:config.MAX_CONTEXT_DOCS]
+            docs_for_context = collected_docs[:self.config.MAX_CONTEXT_DOCS]
             context_str = "\n\n".join([doc.page_content for doc in docs_for_context])
             resource_manager.log_checkpoint(f"Используется {len(docs_for_context)} док-ов для контекста")
 
@@ -105,7 +107,7 @@ class RAGPipeline:
                 break
             
             # --- Шаг 4: Уточнение Запросов (если нужно) ---
-            if iteration < config.MAX_ITERATIONS and report.get("remaining_gaps"):
+            if iteration < self.config.MAX_ITERATIONS and report.get("remaining_gaps"):
                 new_queries = self.refinement_agent.refine(question, analysis_summary, current_queries)
                 if new_queries:
                     current_queries = new_queries
@@ -123,7 +125,7 @@ class RAGPipeline:
             return "К сожалению, по вашему запросу не удалось найти релевантную информацию в базе знаний."
 
         # --- ИЗМЕНЕНИЕ: Используем тот же обрезанный контекст для финального ответа ---
-        final_docs_for_generation = collected_docs[:config.MAX_CONTEXT_DOCS]
+        final_docs_for_generation = collected_docs[:self.config.MAX_CONTEXT_DOCS]
         final_context = "\n\n".join([doc.page_content for doc in final_docs_for_generation])
         
         final_prompt = PROMPT_LIBRARY["final_generator"].format(
@@ -131,7 +133,7 @@ class RAGPipeline:
             question=question
         )
 
-        answer = self.llm_client.generate(prompt=final_prompt, model_name=config.GENERATOR_MODEL)
+        answer = self.llm_client.generate(prompt=final_prompt, model_name=self.config.GENERATOR_MODEL)
         
         resource_manager.log_checkpoint(f"Завершение обработки вопроса")
         return answer
