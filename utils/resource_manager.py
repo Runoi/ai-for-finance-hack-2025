@@ -58,15 +58,25 @@ class ResourceManager:
         if elapsed > self.time_limit_sec:
             print("!!! CRITICAL WARNING: TIME LIMIT EXCEEDED !!!")
 
-    def log_api_call(self, model_name: str, cost_usd: float):
+    def log_api_call(
+        self, 
+        model_name: str, 
+        cost_usd: float, 
+        prompt_tokens: int = 0, 
+        completion_tokens: int = 0
+    ):
         """Логирует вызов API и обновляет общий счетчик затрат."""
         self.api_cost_usd += cost_usd
         
+        # Упрощаем логику: если есть хоть какие-то токены, показываем их.
+        total_tokens = prompt_tokens + completion_tokens
+        token_info = f"| In: {prompt_tokens:<5} tk | Out: {completion_tokens:<4} tk | Total: {total_tokens:<5} tk "
+
         log_entry = (
-            f"[{time.time() - self.start_time:8.2f}s] [API CALL] Model: {model_name:<45} | "
-            f"Cost: ${cost_usd:.5f} | "
-            f"Total Spent: ${self.api_cost_usd:.5f} / ${self.api_budget_usd}"
+            f"[{time.time() - self.start_time:8.2f}s] [API CALL] Model: {model_name:<55} "
+            f"| Cost: ${cost_usd:.5f} | Total: ${self.api_cost_usd:.5f} {token_info}"
         )
+        
         print(log_entry)
         self.logs.append(log_entry)
         
