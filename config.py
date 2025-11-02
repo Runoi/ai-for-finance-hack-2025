@@ -38,6 +38,17 @@ class Config:
     ENABLE_METADATA_HEAD = True
     ENABLE_GRAPH_CONCEPT_HEAD = True
 
+    MODEL_PRICES = {
+        # Генеративные модели (цена за Input / Output)
+        "openrouter/google/gemma-3-27b-it": {"input": 0.09, "output": 0.16},
+        "openrouter/meta-llama/llama-3-70b-instruct": {"input": 0.30, "output": 0.40},
+        "openrouter/mistralai/mistral-small-3.2-24b-instruct": {"input": 0.06, "output": 0.18},
+        "openrouter/x-ai/grok-3-mini": {"input": 0.30, "output": 0.50},
+
+        # Эмбеддинг модели (цена только за Input)
+        "text-embedding-3-small": {"input": 0.02, "output": 0.0},
+    }
+
     # === НАСТРОЙКИ АГЕНТСКОГО ЦИКЛА ===
     # Максимальное количество итераций для FAIR-RAG цикла.
     # 1 = простой RAG. 2-3 = оптимально для сложных вопросов.

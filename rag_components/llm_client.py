@@ -14,10 +14,11 @@ from typing import List, cast, Optional
 import litellm
 from litellm.files.main import ModelResponse
 from litellm import completion
+import tiktoken
 from openai import OpenAI
 from tenacity import retry, stop_after_attempt, wait_random_exponential
 from dotenv import load_dotenv
-
+from config import config
 from utils.resource_manager import resource_manager
 
 load_dotenv()
@@ -50,25 +51,28 @@ class LLMClient:
             base_url=self.base_url
         )
 
+        try:
+            self.tokenizer = tiktoken.get_encoding("cl100k_base")
+        except Exception:
+            self.tokenizer = tiktoken.get_encoding("gpt2") # Запасной вариант
+
     @retry(wait=wait_random_exponential(min=1, max=30), stop=stop_after_attempt(5))
     def generate(self, prompt: str, model_name: str) -> str:
         """Генерирует текстовый ответ от указанной LLM."""
         messages = [{"role": "user", "content": prompt}]
+        # --- 1. СЧИТАЕМ ТОКЕНЫ НА ВХОДЕ ---
+        prompt_tokens = len(self.tokenizer.encode(prompt))
+
         try:
-            
             response = litellm.completion(
                 model=model_name,
                 messages=messages,
                 temperature=0.1,
-                timeout=120
+                timeout=120,
+                use_litellm_proxy=True
             )
             
-            response = cast(ModelResponse, response)
-            cost = getattr(response, 'usage', {}).get('total_cost', 0.0)
-            if cost is not None:
-                resource_manager.log_api_call(model_name, cost)
-
-            # 3. ТОТАЛЬНО БЕЗОПАСНЫЙ доступ к ответу
+            # Безопасный доступ к ответу
             answer_content = ""
             choices = getattr(response, 'choices', [])
             if choices:
@@ -77,39 +81,54 @@ class LLMClient:
                 if message:
                     answer_content = getattr(message, 'content', "")
 
-            if answer_content:
-                return answer_content
-            else:
-                print("!!! WARNING: Получен пустой или некорректный ответ от API.")
-                return "Ошибка: получен пустой ответ от модели."
+            # --- 2. СЧИТАЕМ ТОКЕНЫ НА ВЫХОДЕ И СТОИМОСТЬ ---
+            completion_tokens = len(self.tokenizer.encode(answer_content))
             
+            prices = config.MODEL_PRICES.get(model_name)
+            if prices:
+                cost = (
+                    (prompt_tokens / 1_000_000) * prices["input"] +
+                    (completion_tokens / 1_000_000) * prices["output"]
+                )
+                if cost > 0:
+                    resource_manager.log_api_call(
+                        model_name, cost, prompt_tokens, completion_tokens
+                    )
 
+            return answer_content or "Ошибка: получен пустой ответ от модели."
+            
         except Exception as e:
             print(f"!!! Ошибка API при генерации ({model_name}): {e}. Повторная попытка...")
             raise
+            
         
     @retry(wait=wait_random_exponential(min=1, max=30), stop=stop_after_attempt(5))
     def get_embeddings(self, texts: List[str], model_name: str) -> List[List[float]]:
-        """
-        Получает эмбеддинги, ИСПОЛЬЗУЯ ПРЯМОЙ ВЫЗОВ `openai` SDK.
-        """
+        """Получает эмбеддинги и самостоятельно рассчитывает стоимость."""
         texts = [text.replace("\n", " ") for text in texts if text.strip()]
         if not texts:
             return []
+        
+        # --- 1. СЧИТАЕМ ТОКЕНЫ НА ВХОДЕ ---
+        total_tokens = sum(len(self.tokenizer.encode(text)) for text in texts)
             
         try:
-            
             response = self.embedding_openai_client.embeddings.create(
                 model=model_name,
                 input=texts
             )
             
-            #Подсчет стоимости для OpenAI эмбеддингов (примерный)
-            total_tokens = response.usage.total_tokens
-            cost = (total_tokens / 1_000_000) * 0.02 # Цена для text-embedding-3-small
-            resource_manager.log_api_call(model_name, cost)
+            # --- 2. СЧИТАЕМ СТОИМОСТЬ ---
+            prices = config.MODEL_PRICES.get(model_name)
+            if prices:
+                cost = (total_tokens / 1_000_000) * prices["input"]
+                if cost > 0:
+                    resource_manager.log_api_call(
+                        model_name, cost, prompt_tokens=total_tokens
+                    )
             
-            return [data.embedding for data in response.data]
+            return [data.embedding for data in response.data] if response.data else []
+        
         except Exception as e:
             print(f"!!! Ошибка API при создании эмбеддингов ({model_name}): {e}. Повторная попытка...")
             raise
