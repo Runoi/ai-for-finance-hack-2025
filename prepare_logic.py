@@ -136,7 +136,7 @@ def _create_text_faiss_index(docs: List[Document], embeddings: Embeddings):
 
 def _create_tfidf_retriever(docs: List[Document]):
     """Создает и сохраняет TfidfRetriever по тексту чанков."""
-    # (Эта функция не использует embeddings, поэтому без изменений)
+    
     resource_manager.log_checkpoint("-> Голова B: Создание TF-IDF ретривера")
     tfidf_retriever = TFIDFRetriever.from_documents(docs)
     with open(os.path.join(config.STORAGE_PATH, "tfidf_retriever.pkl"), "wb") as f:
@@ -156,9 +156,7 @@ def _create_metadata_faiss_index(df: pd.DataFrame, embeddings: Embeddings):
         meta_doc = Document(page_content=meta_content, metadata={'doc_id': row.get('id', 'unknown')})
         meta_docs.append(meta_doc)
 
-    # Здесь тоже используем from_documents, так как он эффективен для списков
-    # и количество мета-документов (350) не должно превысить лимит.
-    # Если бы превысило, мы бы применили ту же логику с батчингом.
+    
     if meta_docs:
         vectorstore = FAISS.from_documents(meta_docs, embeddings)
         vectorstore.save_local(os.path.join(config.STORAGE_PATH, "faiss_meta_index"))
@@ -198,8 +196,7 @@ def _create_concept_graph(docs: List[Document], embeddings: Embeddings):
     doc_to_concepts: Dict[str, List[str]] = {}
 
     for i, doc in enumerate(docs):
-        # Доступ к строке разреженной матрицы. Pylance может ругаться из-за неполных
-        # type stubs для scipy, но этот код корректен. Подавляем ложное срабатывание.
+        
         row_slice = tfidf_matrix[i]  # type: ignore
         feature_indices = row_slice.indices
         

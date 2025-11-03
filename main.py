@@ -21,7 +21,7 @@ import csv
 from dotenv import load_dotenv
 
 # --- 1. Настройка Окружения ---
-# Добавляем корневую папку проекта в sys.path для корректных абсолютных импортов.
+
 project_root = os.path.dirname(os.path.abspath(__file__))
 if project_root not in sys.path:
     sys.path.insert(0, project_root)
@@ -43,7 +43,7 @@ def main_workflow():
     resource_manager.log_checkpoint("Старт основного рабочего процесса")
 
     # --- 3. "Ленивая" Инициализация Индексов ---
-    # Проверяем наличие САМОГО ПОСЛЕДНЕГО создаваемого файла для надежности.
+    
     if not os.path.exists(os.path.join(config.STORAGE_PATH, "all_docs.pkl")):
         print("Индексы не найдены или созданы не полностью. Запускаю процесс создания...")
         prepare_all_indices()
@@ -76,7 +76,7 @@ def main_workflow():
         print(f"!!! КРИТИЧЕСКАЯ ОШИБКА: Файл {config.QUESTIONS_PATH} не найден.")
         return
 
-    # Инициализация submission_df: создаем новый или загружаем существующий.
+    
     if not os.path.exists(config.SUBMISSION_PATH):
         submission_df = questions_df.copy()
         submission_df['Ответы на вопрос'] = pd.NA
@@ -85,11 +85,11 @@ def main_workflow():
     else:
         submission_df = pd.read_csv(config.SUBMISSION_PATH)
         print(f"Найден существующий файл {config.SUBMISSION_PATH}. Попытка возобновления.")
-        # На случай, если файл был создан, но колонка ответов не добавилась
+        
         if 'Ответы на вопрос' not in submission_df.columns:
             submission_df['Ответы на вопрос'] = pd.NA
 
-    # Используем ручное управление tqdm с циклом iterrows для максимальной совместимости.
+    
     with tqdm(total=len(questions_df), desc="Генерация ответов") as progress_bar:
         # Возвращаемся к iterrows(), так как он самый надежный по доступу к колонкам
         for index, row in questions_df.iterrows():
