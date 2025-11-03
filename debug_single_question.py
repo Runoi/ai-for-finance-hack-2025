@@ -12,7 +12,7 @@ if project_root not in sys.path:
 from config import config
 from utils.resource_manager import resource_manager
 from rag_components.llm_client import LLMClient
-from rag_components.agents import SeaAgent, RefinementAgent
+from rag_components.agents import SeaAgent, RefinementAgent,DecompositionAgent
 from rag_components.retrievers import build_ensemble_retriever
 from rag_components.pipeline import RAGPipeline
 from prepare_logic import prepare_all_indices
@@ -37,13 +37,15 @@ def main():
         llm_client = LLMClient()
         sea_agent = SeaAgent(llm_client=llm_client)
         refinement_agent = RefinementAgent(llm_client=llm_client)
+        decomposition_agent = DecompositionAgent(llm_client=llm_client)
         ensemble_retriever = build_ensemble_retriever()
 
         pipeline = RAGPipeline(
             retriever=ensemble_retriever,
             llm_client=llm_client,
             sea_agent=sea_agent,
-            refinement_agent=refinement_agent
+            refinement_agent=refinement_agent,
+            decomposition_agent=decomposition_agent
         )
         resource_manager.log_checkpoint("RAG-пайплайн успешно собран")
     except Exception as e:

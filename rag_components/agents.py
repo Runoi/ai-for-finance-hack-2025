@@ -46,3 +46,20 @@ class RefinementAgent:
         except (json.JSONDecodeError, TypeError) as e:
             print(f"!!! Ошибка парсинга ответа от RefinementAgent: {e}")
             return []
+        
+class DecompositionAgent:
+    """Агент для первичной декомпозиции сложного вопроса."""
+    def __init__(self, llm_client: LLMClient, config_override: Optional[Config] = None):
+        self.llm_client = llm_client
+        self.prompt_template = PROMPT_LIBRARY["query_decomposer"]
+        self.config = config_override or config
+    def decompose(self, question: str) -> list[str]:
+        """Разбивает исходный вопрос на список под-вопросов."""
+        prompt = self.prompt_template.format(question=question)
+        try:
+            response_str = self.llm_client.generate(prompt, model_name=config.DECOMPOSER_MODEL)
+            sub_queries = json.loads(response_str)
+            return sub_queries if isinstance(sub_queries, list) else [question]
+        except (json.JSONDecodeError, TypeError) as e:
+            print(f"!!! Ошибка парсинга ответа от DecompositionAgent: {e}. Используем исходный вопрос.")
+            return [question]

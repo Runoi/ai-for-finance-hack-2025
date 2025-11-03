@@ -11,7 +11,7 @@ import pickle
 import networkx as nx
 from typing import List, Dict, Any
 from collections import defaultdict
-
+from concurrent.futures import ThreadPoolExecutor
 # --- Импорты LangChain ---
 from langchain_core.documents import Document
 from langchain_core.retrievers import BaseRetriever, RetrieverLike
@@ -114,6 +114,47 @@ class ConceptGraphRetriever(BaseRetriever):
         
         return relevant_docs
 
+class ParallelEnsembleRetriever(EnsembleRetriever):
+    """
+    Расширенная версия EnsembleRetriever, которая выполняет запросы
+    к дочерним ретриверам параллельно с использованием ThreadPoolExecutor.
+    """
+    def _get_relevant_documents(
+        self,
+        query: str,
+        *,
+        run_manager: CallbackManagerForRetrieverRun,
+    ) -> List[Document]:
+        """
+        Параллельно получает документы от всех ретриверов и объединяет их.
+        """
+        # --- ПАРАЛЛЕЛЬНЫЙ ВЫЗОВ ---
+        with ThreadPoolExecutor(max_workers=len(self.retrievers)) as executor:
+            # .map применяет invoke к каждому ретриверу в отдельном потоке
+            retriever_docs = list(executor.map(
+                lambda r: r.invoke(query, config={"callbacks": run_manager.get_child()}),
+                self.retrievers
+            ))
+
+        # Дальнейшая логика - это Reciprocal Rank Fusion,
+        # скопированная из исходников LangChain.
+        fused_scores: Dict[str, float] = defaultdict(float)
+        for docs_list, weight in zip(retriever_docs, self.weights):
+            for rank, doc in enumerate(docs_list):
+                # Используем page_content как уникальный ключ документа
+                if doc.page_content not in fused_scores:
+                    fused_scores[doc.page_content] = 0
+                fused_scores[doc.page_content] += weight / (self.c + rank + 1)
+        
+        # Собираем все уникальные документы в один список
+        all_unique_docs_map = {doc.page_content: doc for docs_list in retriever_docs for doc in docs_list}
+        
+        # Сортируем документы по их RRF-оценке
+        sorted_contents = sorted(fused_scores.keys(), key=lambda x: fused_scores[x], reverse=True)
+        
+        final_docs = [all_unique_docs_map[content] for content in sorted_contents]
+        
+        return final_docs
 
 def build_ensemble_retriever() -> BaseRetriever:
     """
@@ -219,9 +260,17 @@ def build_ensemble_retriever() -> BaseRetriever:
         
         return retriever_list[0] # type: ignore
 
-    ensemble_retriever = EnsembleRetriever(
-        retrievers=retriever_list, weights=weights_list
-    )
+    # --- ЛОГИКА ПЕРЕКЛЮЧЕНИЯ ---
+    if config.ENABLE_PARALLEL_REQUESTS:
+        ensemble_retriever = ParallelEnsembleRetriever(
+            retrievers=retriever_list, weights=weights_list
+        )
+        resource_manager.log_checkpoint("ParallelEnsembleRetriever успешно собран")
+    else:
+        ensemble_retriever = EnsembleRetriever(
+            retrievers=retriever_list, weights=weights_list
+        )
+        resource_manager.log_checkpoint("EnsembleRetriever (classic) успешно собран")
     
     resource_manager.log_checkpoint("EnsembleRetriever (classic) успешно собран")
     return ensemble_retriever
