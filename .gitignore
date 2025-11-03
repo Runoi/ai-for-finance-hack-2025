@@ -22,3 +22,7 @@ submission_main.py
 # Сгенерированные данные
 # Мы не храним индексы в гите! Они генерируются скриптом.
 storage/
+
+*.csv
+
+tests/ab_test_models.py
