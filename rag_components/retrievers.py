@@ -168,7 +168,7 @@ def build_ensemble_retriever() -> BaseRetriever:
             path = os.path.join(config.STORAGE_PATH, "faiss_meta_index")
             vectorstore_meta = FAISS.load_local(path, embedding_function, allow_dangerous_deserialization=True)
 
-            # --- ИЗМЕНЕНИЕ ЗДЕСЬ ---
+            
             # Для мета-поиска можно использовать другие параметры k
             retriever_c = vectorstore_meta.as_retriever(
                 search_type="mmr",

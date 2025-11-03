@@ -68,7 +68,7 @@ class ResourceManager:
         """Логирует вызов API и обновляет общий счетчик затрат."""
         self.api_cost_usd += cost_usd
         
-        # Упрощаем логику: если есть хоть какие-то токены, показываем их.
+        
         total_tokens = prompt_tokens + completion_tokens
         token_info = f"| In: {prompt_tokens:<5} tk | Out: {completion_tokens:<4} tk | Total: {total_tokens:<5} tk "
 

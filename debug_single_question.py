@@ -24,8 +24,8 @@ def main():
     load_dotenv()
     resource_manager.log_checkpoint("Старт сессии отладки")
 
-    # --- Подготовка и сборка пайплайна (ВНЕ цикла) ---
-    # Проверяем наличие САМОГО ПОСЛЕДНЕГО создаваемого файла
+    # --- Подготовка и сборка пайплайна---
+    
     if not os.path.exists(os.path.join(config.STORAGE_PATH, "all_docs.pkl")):
         print("Индексы не найдены или созданы не полностью. Запускаю процесс создания...")
         prepare_all_indices()

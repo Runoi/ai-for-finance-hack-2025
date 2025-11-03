@@ -1,4 +1,3 @@
-# rag_components/pipeline.py
 """
 Главный класс-оркестратор `RAGPipeline`, реализующий агентский цикл FAIR-RAG.
 
@@ -84,7 +83,7 @@ class RAGPipeline:
                 resource_manager.log_checkpoint("Документы не найдены, прерываем цикл")
                 break
 
-            # --- ИЗМЕНЕНИЕ: Обрезка контекста перед анализом ---
+            
             # Берем только N самых релевантных документов (которые находятся в начале списка)
             docs_for_context = collected_docs[:self.config.MAX_CONTEXT_DOCS]
             context_str = "\n\n".join([doc.page_content for doc in docs_for_context])
