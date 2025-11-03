@@ -4,7 +4,7 @@
 """
 
 from typing import List, Optional
-
+from concurrent.futures import ThreadPoolExecutor
 # --- Импорты LangChain ---
 from langchain_core.retrievers import BaseRetriever
 from langchain_core.documents import Document
@@ -83,8 +83,21 @@ class RAGPipeline:
         
         # 2. Поиск
         all_docs: List[Document] = []
-        for q in sub_queries:
-            all_docs.extend(self.retriever.invoke(q))
+        # for q in sub_queries:
+        #     all_docs.extend(self.retriever.invoke(q))
+        # --- ЛОГИКА ПЕРЕКЛЮЧЕНИЯ ---
+        if self.config.ENABLE_PARALLEL_REQUESTS:
+            # --- ПАРАЛЛЕЛЬНЫЙ РЕЖИМ ---
+            resource_manager.log_checkpoint(f"Запуск {len(sub_queries)} параллельных запросов...")
+            with ThreadPoolExecutor(max_workers=len(sub_queries)) as executor:
+                results_iterator = executor.map(self.retriever.invoke, sub_queries)
+                for result_list in results_iterator:
+                    all_docs.extend(result_list)
+        else:
+            # --- СИНХРОННЫЙ РЕЖИМ ---
+            resource_manager.log_checkpoint("Запуск синхронных запросов...")
+            for q in sub_queries:
+                all_docs.extend(self.retriever.invoke(q))
         
         unique_docs = list({doc.page_content: doc for doc in all_docs}.values())
         docs_for_context = unique_docs[:self.config.MAX_CONTEXT_DOCS]
