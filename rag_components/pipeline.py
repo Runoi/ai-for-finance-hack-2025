@@ -1,8 +1,6 @@
 """
-Главный класс-оркестратор `RAGPipeline`, реализующий агентский цикл FAIR-RAG.
-
-Этот пайплайн управляет всем процессом ответа на вопрос: от итеративного
-поиска и анализа информации до генерации финального, основанного на фактах, ответа.
+Главный класс-оркестратор `RAGPipeline`, реализующий переключаемые стратегии
+обработки запросов.
 """
 
 from typing import List, Optional
@@ -16,15 +14,15 @@ from config import Config, config
 from utils.resource_manager import resource_manager
 from utils.prompt_library import PROMPT_LIBRARY
 from rag_components.llm_client import LLMClient
-from rag_components.agents import SeaAgent, RefinementAgent
+from rag_components.agents import SeaAgent, RefinementAgent, DecompositionAgent
+# Импортируем реранкер, но пока не будем его требовать в __init__
+# from rag_components.reranker import APIReranker
 
 
 class RAGPipeline:
     """
-    Основной класс-оркестратор, управляющий всем RAG-процессом.
-
-    Инициализируется всеми необходимыми компонентами (Dependency Injection)
-    и имеет один главный метод `run` для обработки одного вопроса.
+    Основной класс-оркестратор. Выбирает и запускает одну из трех
+    стратегий обработки в зависимости от `config.STRATEGY`.
     """
     def __init__(
         self,
@@ -32,32 +30,80 @@ class RAGPipeline:
         llm_client: LLMClient,
         sea_agent: SeaAgent,
         refinement_agent: RefinementAgent,
+        decomposition_agent: DecompositionAgent,
+        # reranker: Optional[APIReranker] = None, # Заглушка для будущего
         config_override: Optional[Config] = None,
     ):
-        """
-        Инициализирует пайплайн.
-
-        Args:
-            retriever (BaseRetriever): Собранный ансамблевый ретривер.
-            llm_client (LLMClient): Клиент для взаимодействия с LLM API.
-            sea_agent (SeaAgent): Агент-аналитик для оценки полноты информации.
-            refinement_agent (RefinementAgent): Агент для генерации уточняющих запросов.
-        """
         self.retriever = retriever
+        # self.reranker = reranker
         self.llm_client = llm_client
         self.sea_agent = sea_agent
         self.refinement_agent = refinement_agent
+        self.decomposition_agent = decomposition_agent
         self.config = config_override or config
 
     def run(self, question: str) -> str:
         """
-        Основной метод, запускающий RAG-пайплайн для одного вопроса.
-
-        Реализует итеративный цикл FAIR-RAG с ограничением контекста
-        для предотвращения превышения лимитов LLM.
+        Главный метод. Выбирает и запускает стратегию на основе `self.config.STRATEGY`.
         """
-        resource_manager.log_checkpoint(f"Начало обработки вопроса: '{question[:30]}...'")
+        resource_manager.log_checkpoint(f"Старт обработки. Стратегия: {self.config.STRATEGY}")
+        
+        if self.config.STRATEGY == 'DECOMPOSE':
+            return self._run_decomposition_strategy(question)
+        elif self.config.STRATEGY == 'SIMPLE':
+            return self._run_simple_strategy(question)
+        else: # По умолчанию 'ITERATIVE'
+            return self._run_iterative_strategy(question)
 
+    def _run_simple_strategy(self, question: str) -> str:
+        """Стратегия №3: Простой RAG. Поиск -> Генерация. (1 LLM-вызов)"""
+        resource_manager.log_checkpoint("Выбран путь: Simple RAG")
+        
+        # 1. Поиск (без реранкинга)
+        docs = self.retriever.invoke(question)
+        docs_for_context = docs[:self.config.MAX_CONTEXT_DOCS]
+
+        if not docs_for_context:
+            return "К сожалению, по вашему запросу не удалось найти релевантную информацию."
+
+        # 2. Финальная Генерация
+        final_context = "\n\n".join([doc.page_content for doc in docs_for_context])
+        final_prompt = PROMPT_LIBRARY["final_generator"].format(context=final_context, question=question)
+        answer = self.llm_client.generate(final_prompt, model_name=self.config.GENERATOR_MODEL)
+        
+        resource_manager.log_checkpoint("Завершение обработки (Simple)")
+        return answer
+
+    def _run_decomposition_strategy(self, question: str) -> str:
+        """Стратегия №1: Сначала разбить, потом искать. (2 LLM-вызова)"""
+        resource_manager.log_checkpoint("Выбран путь: Decomposition-First")
+        
+        # 1. Декомпозиция
+        sub_queries = self.decomposition_agent.decompose(question)
+        
+        # 2. Поиск
+        all_docs: List[Document] = []
+        for q in sub_queries:
+            all_docs.extend(self.retriever.invoke(q))
+        
+        unique_docs = list({doc.page_content: doc for doc in all_docs}.values())
+        docs_for_context = unique_docs[:self.config.MAX_CONTEXT_DOCS]
+
+        if not docs_for_context:
+             return "К сожалению, по вашему запросу не удалось найти релевантную информацию."
+        
+        # 3. Финальная Генерация
+        final_context = "\n\n".join([doc.page_content for doc in docs_for_context])
+        final_prompt = PROMPT_LIBRARY["final_generator"].format(context=final_context, question=question)
+        answer = self.llm_client.generate(final_prompt, model_name=self.config.GENERATOR_MODEL)
+        
+        resource_manager.log_checkpoint("Завершение обработки (Decomposition)")
+        return answer
+
+    def _run_iterative_strategy(self, question: str) -> str:
+        """Стратегия №2: Искать, потом анализировать."""
+        resource_manager.log_checkpoint("Выбран путь: Iterative-Refinement")
+        
         collected_docs: List[Document] = []
         current_queries: List[str] = [question]
         analysis_summary = "Первоначальный запрос пользователя."
@@ -66,31 +112,26 @@ class RAGPipeline:
             iteration = i + 1
             resource_manager.log_checkpoint(f"Старт итерации {iteration}/{self.config.MAX_ITERATIONS}")
             
-            # --- Шаг 1: Поиск и сбор ---
+            # Поиск и сбор
             new_docs_this_iteration = []
             for q in current_queries:
-                # Мы по-прежнему ищем по всем запросам, чтобы собрать как можно больше кандидатов
                 retrieved = self.retriever.invoke(q)
                 new_docs_this_iteration.extend(retrieved)
 
-            # Дедупликация. collected_docs теперь содержит всех уникальных кандидатов.
             seen_contents = {doc.page_content for doc in collected_docs}
             unique_new_docs = [doc for doc in new_docs_this_iteration if doc.page_content not in seen_contents]
             collected_docs.extend(unique_new_docs)
-            resource_manager.log_checkpoint(f"Собрано {len(collected_docs)} всего уник. документов")
             
             if not collected_docs:
                 resource_manager.log_checkpoint("Документы не найдены, прерываем цикл")
                 break
 
-            
-            # Берем только N самых релевантных документов (которые находятся в начале списка)
+            # Обрезка контекста
             docs_for_context = collected_docs[:self.config.MAX_CONTEXT_DOCS]
             context_str = "\n\n".join([doc.page_content for doc in docs_for_context])
             resource_manager.log_checkpoint(f"Используется {len(docs_for_context)} док-ов для контекста")
 
-
-            # --- Шаг 2: Аудит Доказательств (SEA) на ОБРЕЗАННОМ контексте ---
+            # Аудит (SEA)
             report = self.sea_agent.analyze(question, context_str)
             
             if not report:
@@ -100,39 +141,29 @@ class RAGPipeline:
             analysis_summary = report.get("analysis_summary", "Анализ не удался.")
             resource_manager.log_checkpoint(f"SEA-агент решил: Достаточно? -> {report.get('is_sufficient')}")
 
-            # --- Шаг 3: Проверка Достаточности ---
             if report.get("is_sufficient") == "Yes":
-                resource_manager.log_checkpoint("Информации достаточно, завершаем цикл")
                 break
             
-            # --- Шаг 4: Уточнение Запросов (если нужно) ---
+            # Уточнение (Refinement)
             if iteration < self.config.MAX_ITERATIONS and report.get("remaining_gaps"):
                 new_queries = self.refinement_agent.refine(question, analysis_summary, current_queries)
                 if new_queries:
                     current_queries = new_queries
-                    resource_manager.log_checkpoint(f"Сгенерированы новые запросы: {new_queries}")
                 else:
-                    resource_manager.log_checkpoint("Refinement-агент не сгенерировал новых запросов, прерываем цикл")
                     break
             else:
-                 resource_manager.log_checkpoint("Нет инф. пробелов или достигнут лимит итераций, выходим из цикла")
                  break
 
-        # --- Финальная Генерация ---
+        # Финальная Генерация
         resource_manager.log_checkpoint("Начало финальной генерации ответа")
         if not collected_docs:
             return "К сожалению, по вашему запросу не удалось найти релевантную информацию в базе знаний."
 
-        # --- ИЗМЕНЕНИЕ: Используем тот же обрезанный контекст для финального ответа ---
         final_docs_for_generation = collected_docs[:self.config.MAX_CONTEXT_DOCS]
         final_context = "\n\n".join([doc.page_content for doc in final_docs_for_generation])
         
-        final_prompt = PROMPT_LIBRARY["final_generator"].format(
-            context=final_context,
-            question=question
-        )
-
+        final_prompt = PROMPT_LIBRARY["final_generator"].format(context=final_context, question=question)
         answer = self.llm_client.generate(prompt=final_prompt, model_name=self.config.GENERATOR_MODEL)
         
-        resource_manager.log_checkpoint(f"Завершение обработки вопроса")
+        resource_manager.log_checkpoint("Завершение обработки вопроса (Iterative)")
         return answer

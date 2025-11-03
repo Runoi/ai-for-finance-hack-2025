@@ -15,13 +15,18 @@ class Config:
     SUBMISSION_PATH = "submission.csv"
     STORAGE_PATH = "storage"
     
+      # === ГЛАВНЫЙ СТРАТЕГИЧЕСКИЙ ПЕРЕКЛЮЧАТЕЛЬ ===
+    # - 'ITERATIVE': Поиск -> Анализ (SEA) -> Уточнение (Refinement).
+    # - 'DECOMPOSE': Декомпозиция -> Поиск -> Генерация.
+    # - 'SIMPLE':    Поиск -> Генерация (самый быстрый режим).
+    STRATEGY: str = 'ITERATIVE' 
+
     # === НАСТРОЙКИ МОДЕЛЕЙ ===
-    # Модели для разных ролей в агентской системе
-    EMBEDDING_MODEL = "text-embedding-3-small"
-    
+    EMBEDDING_MODEL: str = "text-embedding-3-small"
     GENERATOR_MODEL: str = "openrouter/mistralai/mistral-small-3.2-24b-instruct"
-    ANALYST_MODEL: str   = "openrouter/meta-llama/llama-3-70b-instruct"
-    REFINER_MODEL : str  = "openrouter/meta-llama/llama-3-70b-instruct"
+    ANALYST_MODEL: str = "openrouter/meta-llama/llama-3-70b-instruct"
+    REFINER_MODEL: str = "openrouter/meta-llama/llama-3-70b-instruct"
+    DECOMPOSER_MODEL: str = "openrouter/meta-llama/llama-3-70b-instruct"
     #"openrouter/meta-llama/llama-3-70b-instruct"
     #"openrouter/google/gemma-3-27b-it"
     # Для Mistral: "openrouter/mistralai/mistral-small-3.2-24b-instruct"
@@ -65,6 +70,8 @@ class Config:
     MAX_ITERATIONS = 1
 
     MAX_CONTEXT_DOCS = 10
+
+    
 
 # Глобальный экземпляр конфига для импорта в других модулях
 config = Config()
