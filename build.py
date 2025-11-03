@@ -1,3 +1,4 @@
+# build.py
 """
 Скрипт для сборки проекта в один монолитный файл `main.py` для сдачи.
 
@@ -18,28 +19,29 @@ import os
 # 1. ОПРЕДЕЛЯЕМ ПРАВИЛЬНЫЙ ПОРЯДОК ФАЙЛОВ
 # Порядок критически важен: от базовых утилит к высокоуровневой логике.
 FILE_ORDER = [
-    # Базовые утилиты и конфигурация
+    # Уровень 0: Конфигурация и базовые утилиты
     'config.py',
     'utils/resource_manager.py',
     'utils/prompt_library.py',
     
-    # Низкоуровневые компоненты RAG
+    # Уровень 1: Низкоуровневые компоненты RAG (работа с API и данными)
     'rag_components/llm_client.py',
-    'rag_components/embeddings.py', # Зависит от llm_client
+    'rag_components/embeddings.py',
+    #'rag_components/reranker.py',
     
-    # Компоненты среднего уровня
-    'rag_components/retrievers.py', # Зависит от embeddings
-    'rag_components/agents.py',     # Зависит от llm_client и prompt_library
+    # Уровень 2: Компоненты среднего уровня (сборка "движка" и "мозгов")
+    'rag_components/retrievers.py',
+    'rag_components/agents.py',
     
-    # Высокоуровневая логика
-    'rag_components/pipeline.py',   # Зависит от agents и retrievers
-    'prepare_logic.py',             # Зависит почти от всего
+    # Уровень 3: Высокоуровневая логика (пайплайн и подготовка)
+    'rag_components/pipeline.py',
+    'prepare_logic.py',
     
-    # Главный исполняемый блок
+    # Уровень 4: Главный исполняемый блок (точка входа)
     'main.py'
 ]
 
-# Префиксы локальных импортов, которые нужно удалить
+# Префиксы локальных импортов, которые нужно удалить при сборке
 LOCAL_IMPORT_PREFIXES = (
     'from config',
     'from utils',
@@ -55,7 +57,7 @@ def build():
     """
     Основная функция сборки.
     """
-    print("🚀 Начало сборки проекта в монолитный файл...")
+    print("Начало сборки проекта в монолитный файл...")
     
     all_imports = set()
     file_contents = []
@@ -63,21 +65,21 @@ def build():
     # --- Шаг 1: Читаем все файлы и разделяем импорты и код ---
     for filename in FILE_ORDER:
         if not os.path.exists(filename):
-            print(f"⚠️  ПРЕДУПРЕЖДЕНИЕ: Файл {filename} не найден, пропускаю.")
+            print(f"ПРЕДУПРЕЖДЕНИЕ: Файл {filename} не найден, пропускаю.")
             continue
 
         print(f"   - Обработка файла: {filename}")
         with open(filename, 'r', encoding='utf-8') as infile:
             lines = infile.readlines()
             
+            # Отделяем импорты от остального кода
             imports = {
                 line for line in lines 
                 if line.strip().startswith('import ') or line.strip().startswith('from ')
             }
-            
             code = [line for line in lines if line not in imports]
             
-            # Фильтруем локальные импорты
+            # Фильтруем локальные импорты, оставляя только внешние
             external_imports = {
                 imp for imp in imports 
                 if not imp.strip().startswith(LOCAL_IMPORT_PREFIXES)
@@ -91,21 +93,24 @@ def build():
         # Записываем заголовок
         outfile.write("# ======================================================================\n")
         outfile.write("#  ЭТОТ ФАЙЛ СГЕНЕРИРОВАН АВТОМАТИЧЕСКИ. НЕ РЕДАКТИРУЙТЕ ЕГО ВРУЧНУЮ.\n")
+        outfile.write(f"#  Сгенерирован из {len(FILE_ORDER)} исходных файлов.\n")
         outfile.write("# ======================================================================\n\n")
 
         # Записываем все уникальные внешние импорты в начало
         outfile.write("# === ГЛОБАЛЬНЫЕ ИМПОРТЫ ===\n")
+        # Сортируем импорты для чистоты и предсказуемости
         outfile.writelines(sorted(list(all_imports)))
         outfile.write("\n\n")
 
         # Последовательно записываем код из каждого файла
         for filename, code in file_contents:
-            outfile.write(f"# {'='*20} ИЗ ФАЙЛА: {filename} {'='*20}\n\n")
+            outfile.write(f"\n# {'='*25} ИЗ ФАЙЛА: {filename} {'='*25}\n\n")
             outfile.writelines(code)
-            outfile.write("\n\n")
+            outfile.write("\n")
 
-    print(f"✅ Проект успешно собран в файл: {OUTPUT_FILENAME}")
-    print("Теперь вы можете переименовать его в 'main.py' и добавить в zip-архив для сдачи.")
+    print(f"\nПроект успешно собран в файл: {OUTPUT_FILENAME}")
+    print("   Теперь вы можете переименовать его в 'main.py' и добавить в zip-архив для сдачи.")
+    print("   Не забудьте также добавить в архив 'requirements.txt'.")
 
 
 if __name__ == "__main__":

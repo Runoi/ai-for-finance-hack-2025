@@ -19,7 +19,7 @@ class Config:
     # - 'ITERATIVE': Поиск -> Анализ (SEA) -> Уточнение (Refinement).
     # - 'DECOMPOSE': Декомпозиция -> Поиск -> Генерация.
     # - 'SIMPLE':    Поиск -> Генерация (самый быстрый режим).
-    STRATEGY: str = 'ITERATIVE' 
+    STRATEGY: str = 'DECOMPOSE' 
 
     # === НАСТРОЙКИ МОДЕЛЕЙ ===
     EMBEDDING_MODEL: str = "text-embedding-3-small"
@@ -71,7 +71,7 @@ class Config:
 
     MAX_CONTEXT_DOCS = 10
 
-    
+    ENABLE_PARALLEL_REQUESTS: bool = True
 
 # Глобальный экземпляр конфига для импорта в других модулях
 config = Config()
