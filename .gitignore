@@ -26,3 +26,6 @@ storage/
 *.csv
 
 tests/ab_test_models.py
+scripts
+tracing
+img

@@ -19,7 +19,7 @@ class Config:
     # - 'ITERATIVE': Поиск -> Анализ (SEA) -> Уточнение (Refinement).
     # - 'DECOMPOSE': Декомпозиция -> Поиск -> Генерация.
     # - 'SIMPLE':    Поиск -> Генерация (самый быстрый режим).
-    STRATEGY: str = 'DECOMPOSE' 
+    STRATEGY: str = 'ITERATIVE' 
 
     # === НАСТРОЙКИ МОДЕЛЕЙ ===
     EMBEDDING_MODEL: str = "text-embedding-3-small"
