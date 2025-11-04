@@ -24,8 +24,8 @@ class Config:
     # === НАСТРОЙКИ МОДЕЛЕЙ ===
     EMBEDDING_MODEL: str = "text-embedding-3-small"
     GENERATOR_MODEL: str = "openrouter/mistralai/mistral-small-3.2-24b-instruct"
-    ANALYST_MODEL: str = "openrouter/meta-llama/llama-3-70b-instruct"
-    REFINER_MODEL: str = "openrouter/meta-llama/llama-3-70b-instruct"
+    ANALYST_MODEL: str = "openrouter/mistralai/mistral-small-3.2-24b-instruct"
+    REFINER_MODEL: str = "openrouter/mistralai/mistral-small-3.2-24b-instruct"
     DECOMPOSER_MODEL: str = "openrouter/meta-llama/llama-3-70b-instruct"
     #"openrouter/meta-llama/llama-3-70b-instruct"
     #"openrouter/google/gemma-3-27b-it"
@@ -67,7 +67,7 @@ class Config:
     # === НАСТРОЙКИ АГЕНТСКОГО ЦИКЛА ===
     # Максимальное количество итераций для FAIR-RAG цикла.
     # 1 = простой RAG. 2-3 = оптимально для сложных вопросов.
-    MAX_ITERATIONS = 1
+    MAX_ITERATIONS = 3
 
     MAX_CONTEXT_DOCS = 10
 
