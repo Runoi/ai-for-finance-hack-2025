@@ -10,6 +10,7 @@
 """
 
 import os
+import re
 from typing import List, cast, Optional
 import litellm
 from litellm.files.main import ModelResponse
@@ -58,12 +59,17 @@ class LLMClient:
 
     @retry(wait=wait_random_exponential(min=1, max=30), stop=stop_after_attempt(5))
     def generate(self, prompt: str, model_name: str) -> str:
-        """Генерирует текстовый ответ от указанной LLM."""
+        """
+        Генерирует текстовый ответ от указанной LLM, самостоятельно рассчитывает
+        стоимость и очищает ответ от CoCT-тегов.
+        """
         messages = [{"role": "user", "content": prompt}]
-        # --- 1. СЧИТАЕМ ТОКЕНЫ НА ВХОДЕ ---
+        
+        # 1. Считаем токены на входе до вызова API
         prompt_tokens = len(self.tokenizer.encode(prompt))
 
         try:
+            # Вызываем API через litellm
             response = litellm.completion(
                 model=model_name,
                 messages=messages,
@@ -72,17 +78,24 @@ class LLMClient:
                 use_litellm_proxy=True
             )
             
-            # Безопасный доступ к ответу
-            answer_content = ""
+            # 2. Безопасно извлекаем "сырой" ответ модели
+            raw_answer_content = ""
             choices = getattr(response, 'choices', [])
             if choices:
                 first_choice = choices[0]
                 message = getattr(first_choice, 'message', None)
                 if message:
-                    answer_content = getattr(message, 'content', "")
+                    raw_answer_content = getattr(message, 'content', "")
 
-            # --- 2. СЧИТАЕМ ТОКЕНЫ НА ВЫХОДЕ И СТОИМОСТЬ ---
-            completion_tokens = len(self.tokenizer.encode(answer_content))
+            # 3. Очищаем ответ от CoCT-тегов ("мыслей")
+            # Сначала удаляем открывающие теги
+            clean_answer_step1 = re.sub(r'<концепт:[^>]+>', '', raw_answer_content)
+            # Затем удаляем закрывающие теги
+            clean_answer = re.sub(r'</концепт:[^>]+>', '', clean_answer_step1).strip()
+            
+            # 4. Считаем токены на выходе и общую стоимость
+            # Для подсчета стоимости используем "сырой" ответ, так как мы платим за него
+            completion_tokens = len(self.tokenizer.encode(raw_answer_content))
             
             prices = config.MODEL_PRICES.get(model_name)
             if prices:
@@ -95,7 +108,13 @@ class LLMClient:
                         model_name, cost, prompt_tokens, completion_tokens
                     )
 
-            return answer_content or "Ошибка: получен пустой ответ от модели."
+            # 5. Возвращаем "чистый" ответ
+            if clean_answer:
+                return clean_answer
+            else:
+                # Если даже после очистки ответ пустой
+                print("!!! WARNING: Получен пустой или некорректный ответ от API.")
+                return "Ошибка: получен пустой ответ от модели."
             
         except Exception as e:
             print(f"!!! Ошибка API при генерации ({model_name}): {e}. Повторная попытка...")
