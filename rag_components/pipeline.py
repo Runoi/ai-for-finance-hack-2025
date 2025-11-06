@@ -114,9 +114,12 @@ class RAGPipeline:
         return answer
 
     def _run_iterative_strategy(self, question: str) -> str:
-        """Стратегия №2: Искать, потом анализировать."""
+        """
+        Стратегия №2: Искать, потом анализировать. (2-3 LLM-вызова)
+        Реализует отказоустойчивый агентский цикл FAIR-RAG.
+        """
         resource_manager.log_checkpoint("Выбран путь: Iterative-Refinement")
-        
+
         collected_docs: List[Document] = []
         current_queries: List[str] = [question]
         analysis_summary = "Первоначальный запрос пользователя."
@@ -125,7 +128,7 @@ class RAGPipeline:
             iteration = i + 1
             resource_manager.log_checkpoint(f"Старт итерации {iteration}/{self.config.MAX_ITERATIONS}")
             
-            # Поиск и сбор
+            # --- Шаг 1: Поиск и сбор ---
             new_docs_this_iteration = []
             for q in current_queries:
                 retrieved = self.retriever.invoke(q)
@@ -139,43 +142,59 @@ class RAGPipeline:
                 resource_manager.log_checkpoint("Документы не найдены, прерываем цикл")
                 break
 
-            # Обрезка контекста
+            resource_manager.log_checkpoint(f"Собрано {len(collected_docs)} всего уник. документов")
+
+            # --- Шаг 2: Реранкинг (если реализовали) и обрезка контекста ---
+            # if self.reranker:
+            #     docs_for_context = self.reranker.rerank(question, collected_docs, top_n=self.config.MAX_CONTEXT_DOCS)
+            # else:
             docs_for_context = collected_docs[:self.config.MAX_CONTEXT_DOCS]
+            
             context_str = "\n\n".join([doc.page_content for doc in docs_for_context])
             resource_manager.log_checkpoint(f"Используется {len(docs_for_context)} док-ов для контекста")
 
-            # Аудит (SEA)
+            # --- Шаг 3: Аудит Доказательств (SEA) ---
             report = self.sea_agent.analyze(question, context_str)
             
-            if not report:
-                resource_manager.log_checkpoint("Ошибка SEA-агента, прерываем цикл")
-                break
-                
+            # --- Шаг 4: Безопасный парсинг отчета ---
+            is_sufficient = str(report.get("is_sufficient", "No")).lower() == "yes"
+            remaining_gaps = report.get("remaining_gaps", [])
             analysis_summary = report.get("analysis_summary", "Анализ не удался.")
+            
             resource_manager.log_checkpoint(f"SEA-агент решил: Достаточно? -> {report.get('is_sufficient')}")
 
-            if report.get("is_sufficient") == "Yes":
+            # --- Шаг 5: Проверка Достаточности ---
+            if is_sufficient:
+                resource_manager.log_checkpoint("Информации достаточно, завершаем цикл")
                 break
             
-            # Уточнение (Refinement)
-            if iteration < self.config.MAX_ITERATIONS and report.get("remaining_gaps"):
+            # --- Шаг 6: Уточнение Запросов (если нужно и возможно) ---
+            if iteration < self.config.MAX_ITERATIONS and remaining_gaps:
                 new_queries = self.refinement_agent.refine(question, analysis_summary, current_queries)
                 if new_queries:
                     current_queries = new_queries
+                    resource_manager.log_checkpoint(f"Сгенерированы новые запросы: {new_queries}")
                 else:
+                    resource_manager.log_checkpoint("Refinement-агент не сгенерировал новых запросов, прерываем цикл")
                     break
             else:
+                 resource_manager.log_checkpoint("Нет инф. пробелов или достигнут лимит итераций, выходим из цикла")
                  break
 
-        # Финальная Генерация
+        # --- Финальная Генерация ---
         resource_manager.log_checkpoint("Начало финальной генерации ответа")
         if not collected_docs:
             return "К сожалению, по вашему запросу не удалось найти релевантную информацию в базе знаний."
 
+        # Используем финальный набор документов для генерации
         final_docs_for_generation = collected_docs[:self.config.MAX_CONTEXT_DOCS]
         final_context = "\n\n".join([doc.page_content for doc in final_docs_for_generation])
         
-        final_prompt = PROMPT_LIBRARY["final_generator"].format(context=final_context, question=question)
+        final_prompt = PROMPT_LIBRARY["final_generator"].format(
+            context=final_context,
+            question=question
+        )
+
         answer = self.llm_client.generate(prompt=final_prompt, model_name=self.config.GENERATOR_MODEL)
         
         resource_manager.log_checkpoint("Завершение обработки вопроса (Iterative)")

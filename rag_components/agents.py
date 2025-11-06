@@ -2,6 +2,7 @@
 Модуль, реализующий "думающих" агентов для FAIR-RAG цикла.
 """
 import json
+import re
 from typing import Optional
 from .llm_client import LLMClient
 from utils.prompt_library import PROMPT_LIBRARY
@@ -15,15 +16,40 @@ class SeaAgent:
         self.config = config_override or config
 
     def analyze(self, question: str, context: str) -> dict:
-        """Анализирует контекст и возвращает отчет о достаточности информации."""
+        """
+        Анализирует контекст и возвращает отчет о достаточности информации.
+        Теперь с "пуленепробиваемой" обработкой ошибок.
+        """
         prompt = self.prompt_template.format(question=question, context=context)
         try:
             response_str = self.llm_client.generate(prompt, model_name=self.config.ANALYST_MODEL)
-            report = json.loads(response_str)
-            return report
-        except (json.JSONDecodeError, KeyError) as e:
-            print(f"!!! Ошибка парсинга ответа от SeaAgent: {e}")
-            return {"is_sufficient": "No", "analysis_summary": "Ошибка анализа.", "remaining_gaps": []}
+            
+            # Ищем JSON-блок, который начинается с `{` и заканчивается `}`
+            match = re.search(r'\{.*\}', response_str, re.DOTALL)
+            if match:
+                json_str = match.group(0)
+                report = json.loads(json_str)
+                # Проверяем наличие ключевых полей для надежности
+                if "is_sufficient" in report and "remaining_gaps" in report:
+                    return report
+                else:
+                    raise KeyError("В JSON отчете отсутствуют обязательные ключи.")
+            else:
+                raise json.JSONDecodeError("JSON-объект не найден в ответе модели.", response_str, 0)
+
+        except (json.JSONDecodeError, KeyError, Exception) as e:
+            # --- ИСПРАВЛЕННЫЙ FALLBACK ---
+            # Если агент не справился, мы не можем доверять его анализу.
+            # Поэтому мы считаем, что информации НЕ достаточно, и в качестве
+            # "пробела" просим уточнить ИСХОДНЫЙ ВОПРОС.
+            # Это гарантирует, что `RefinementAgent` получит задачу и цикл продолжится.
+            print(f"!!! Ошибка или некорректный формат ответа от SeaAgent: {e}. Запускаю 2-ю итерацию с исходным вопросом.")
+            return {
+                "is_sufficient": "No", 
+                "analysis_summary": "Агент-аналитик не смог обработать контекст. Требуется повторный, более глубокий поиск.", 
+                "confirmed_findings": [],
+                "remaining_gaps": [question] # <--- КЛЮЧЕВОЕ ИЗМЕНЕНИЕ
+            }
 
 class RefinementAgent:
     """Агент-Поисковик для генерации уточняющих запросов."""

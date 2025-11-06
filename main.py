@@ -19,6 +19,7 @@ from tqdm import tqdm
 from dotenv import load_dotenv
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
+
 # --- 1. Настройка Окружения ---
 # Добавляем корневую папку проекта в sys.path для корректных абсолютных импортов.
 project_root = os.path.dirname(os.path.abspath(__file__))
@@ -90,7 +91,7 @@ def main_workflow():
 
     # --- 5. Параллельная Обработка Вопросов ---
     try:
-        questions_df = pd.read_csv(config.QUESTIONS_PATH)
+        questions_df = pd.read_csv(config.QUESTIONS_PATH,encoding='utf-8')
     except FileNotFoundError:
         print(f"!!! КРИТИЧЕСКАЯ ОШИБКА: Файл {config.QUESTIONS_PATH} не найден.")
         return
@@ -100,7 +101,7 @@ def main_workflow():
         submission_df = questions_df.copy()
         submission_df['Ответы на вопрос'] = pd.NA
     else:
-        submission_df = pd.read_csv(config.SUBMISSION_PATH)
+        submission_df = pd.read_csv(config.SUBMISSION_PATH,encoding='utf-8')
         print(f"Найден существующий файл {config.SUBMISSION_PATH}. Попытка возобновления.")
         if 'Ответы на вопрос' not in submission_df.columns:
             submission_df['Ответы на вопрос'] = pd.NA
@@ -124,7 +125,7 @@ def main_workflow():
                 index, answer = future.result()
                 submission_df.loc[index, 'Ответы на вопрос'] = answer # type: ignore
                 # Сохраняем прогресс после каждого готового ответа
-                submission_df.to_csv(config.SUBMISSION_PATH, index=False)
+                submission_df.to_csv(config.SUBMISSION_PATH, index=False,encoding='utf-8')
 
     resource_manager.log_checkpoint(f"Файл {config.SUBMISSION_PATH} полностью сгенерирован")
 
