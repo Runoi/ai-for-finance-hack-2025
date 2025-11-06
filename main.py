@@ -19,6 +19,7 @@ from tqdm import tqdm
 from dotenv import load_dotenv
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
+
 # --- 1. Настройка Окружения ---
 # Добавляем корневую папку проекта в sys.path для корректных абсолютных импортов.
 project_root = os.path.dirname(os.path.abspath(__file__))
