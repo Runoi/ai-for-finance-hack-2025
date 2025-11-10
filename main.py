@@ -34,7 +34,7 @@ from rag_components.agents import SeaAgent, RefinementAgent, DecompositionAgent
 from rag_components.retrievers import build_ensemble_retriever
 from rag_components.pipeline import RAGPipeline
 from prepare_logic import prepare_all_indices
-
+import csv
 
 def process_single_question(args):
     """
@@ -47,9 +47,9 @@ def process_single_question(args):
         
         # Нормализуем ответ: заменяем все последовательности пробельных символов
         # (включая переносы строк) на один пробел.
-        normalized_answer = " ".join(answer.split())
+        # normalized_answer = " ".join(answer.split())
         
-        return index, normalized_answer
+        return index, answer #normalized_answer
     except Exception as e:
         error_message = f"ОШИБКА: {e}"
         print(f"\n!!! Ошибка при обработке вопроса '{question[:50]}...': {error_message}")
@@ -125,7 +125,7 @@ def main_workflow():
                 index, answer = future.result()
                 submission_df.loc[index, 'Ответы на вопрос'] = answer # type: ignore
                 # Сохраняем прогресс после каждого готового ответа
-                submission_df.to_csv(config.SUBMISSION_PATH, index=False,encoding='utf-8')
+                submission_df.to_csv(config.SUBMISSION_PATH, index=False,encoding='utf-8', quoting=csv.QUOTE_ALL)
 
     resource_manager.log_checkpoint(f"Файл {config.SUBMISSION_PATH} полностью сгенерирован")
 
